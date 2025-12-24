@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Upload, Download, Settings, Menu, X, Plus, Trash2 } from 'lucide-react'
+import { Send, Bot, User, Upload, Download, Menu, X, Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 interface Message {
@@ -33,12 +33,17 @@ export default function ChatInterface() {
   const [currentChatId, setCurrentChatId] = useState<string>('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chats, setChats] = useState<any[]>([])
+  const [systemStatus, setSystemStatus] = useState({
+    isRealMode: false,
+    status: 'Checking system...',
+    color: 'gray'
+  })
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const models = [
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'OpenAI' },
     { id: 'gpt-4', name: 'GPT-4', provider: 'OpenAI' },
-    { id: 'gemini-pro', name: 'Gemini Pro', provider: 'Google' },
+    { id: 'gemini-pro', name: 'Gemini 1.5 Flash', provider: 'Google' },
   ]
 
   const scrollToBottom = () => {
@@ -52,7 +57,40 @@ export default function ChatInterface() {
   // Fetch chats on mount
   useEffect(() => {
     fetchChats()
+    checkSystemStatus()
   }, [])
+
+  const checkSystemStatus = async () => {
+    try {
+      // Try to fetch system status from API
+      const response = await fetch('/api/status').catch(() => null)
+      
+      if (response?.ok) {
+        const data = await response.json()
+        const isRealMode = data.mode === 'production'
+        
+        setSystemStatus({
+          isRealMode,
+          status: isRealMode ? 'Production Mode' : 'Development Mode',
+          color: isRealMode ? 'green' : 'yellow'
+        })
+      } else {
+        // Default to development mode
+        setSystemStatus({
+          isRealMode: false,
+          status: 'Development Mode',
+          color: 'yellow'
+        })
+      }
+    } catch (error) {
+      console.log('System status check:', error)
+      setSystemStatus({
+        isRealMode: false,
+        status: 'Development Mode',
+        color: 'yellow'
+      })
+    }
+  }
 
   const fetchChats = async () => {
     try {
@@ -92,7 +130,7 @@ export default function ChatInterface() {
     setIsLoading(true)
 
     try {
-      console.log('Sending request to /api/chat...')
+      console.log('Sending request to API...')
       
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -112,8 +150,28 @@ export default function ChatInterface() {
       console.log('Response status:', response.status)
       
       if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`API error: ${response.status} - ${errorText}`)
+        let errorMessage = `API error: ${response.status}`
+        let errorDetails = ''
+        
+        // Read response body once - try JSON first, fallback to text
+        try {
+          const responseText = await response.text()
+          try {
+            const errorData = JSON.parse(responseText)
+            errorMessage = errorData.message || errorData.error || errorMessage
+            errorDetails = errorData.details || ''
+          } catch (jsonError) {
+            // Not JSON, use as plain text
+            errorMessage = responseText || errorMessage
+          }
+        } catch (readError) {
+          // If reading fails, use status text
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        }
+        
+        const error = new Error(errorMessage)
+        ;(error as any).details = errorDetails
+        throw error
       }
 
       const data = await response.json()
@@ -123,11 +181,17 @@ export default function ChatInterface() {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.content || 'No response content',
+        content: data.content,
         timestamp: new Date(),
       }
       
       setMessages(prev => [...prev, assistantMessage])
+      
+      // Update current chat ID if new chat was created
+      if (data.chatId && !currentChatId) {
+        setCurrentChatId(data.chatId)
+      }
+      
       toast.success(`Response from ${selectedModel} received!`)
 
       // Refresh chat list
@@ -135,19 +199,42 @@ export default function ChatInterface() {
 
     } catch (error) {
       console.error('Chat error:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Failed to get response'
-      toast.error(errorMessage)
       
-      // Add error message as assistant response
-      setMessages(prev => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: `Error: ${errorMessage}. Please check your API configuration.`,
-          timestamp: new Date(),
-        }
-      ])
+      // Try to parse error response
+      let errorMessage = 'Failed to get AI response'
+      let errorDetails = ''
+      
+      if (error instanceof Error) {
+        errorMessage = error.message
+        errorDetails = (error as any).details || ''
+      }
+      
+      // Show error toast with details
+      const isAPIKeyError = errorMessage.includes('API_KEY') || 
+                            errorMessage.includes('not set') || 
+                            errorMessage.includes('API Key Error')
+      
+      if (isAPIKeyError) {
+        toast.error('API Key Error: Please configure your API keys in .env.local', {
+          duration: 6000
+        })
+        errorDetails = errorDetails || `\n\n**Setup Required:**\n1. Create a .env.local file in the project root\n2. Add your API keys:\n   - OPENAI_API_KEY=sk-your-key-here\n   - GOOGLE_GENERATIVE_AI_API_KEY=your-key-here\n3. Restart the development server`
+      } else {
+        toast.error(`AI API Error: ${errorMessage}`, {
+          duration: 5000
+        })
+        errorDetails = errorDetails || `\n\n**Error Details:**\n${errorMessage}\n\nPlease check your API keys and try again.`
+      }
+      
+      // Add error message to chat
+      const errorResponse: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `❌ **Error:** Unable to get response from ${selectedModel}${errorDetails}`,
+        timestamp: new Date(),
+      }
+      
+      setMessages(prev => [...prev, errorResponse])
     } finally {
       setIsLoading(false)
     }
@@ -233,11 +320,28 @@ export default function ChatInterface() {
     }
   }
 
-  const loadChat = (chatId: string) => {
-    // For now, just set the current chat ID
-    // In a real app, you would fetch the chat messages
-    setCurrentChatId(chatId)
-    toast.success(`Switched to chat: ${chats.find(c => c.id === chatId)?.title || 'Untitled'}`)
+  const loadChat = async (chatId: string) => {
+    try {
+      // In a real app, you would fetch chat messages from API
+      // For now, just switch the chat ID and show placeholder
+      setCurrentChatId(chatId)
+      const chat = chats.find(c => c.id === chatId)
+      if (chat) {
+        setSelectedModel(chat.model as AIModel)
+        setMessages([
+          {
+            id: '1',
+            role: 'assistant',
+            content: `Loaded chat: ${chat.title}. (Messages would load here in production)`,
+            timestamp: new Date(),
+          }
+        ])
+        toast.success(`Switched to: ${chat.title}`)
+      }
+    } catch (error) {
+      console.error('Load chat error:', error)
+      toast.error('Failed to load chat')
+    }
   }
 
   return (
@@ -258,7 +362,9 @@ export default function ChatInterface() {
               </div>
               <div>
                 <h1 className="text-lg font-bold text-gray-800 md:text-2xl">AI Content Assistant</h1>
-                <p className="text-xs text-gray-600 md:text-sm">Local Development Mode</p>
+                <p className="text-xs text-gray-600 md:text-sm">
+                  {systemStatus.status}
+                </p>
               </div>
             </div>
           </div>
@@ -267,6 +373,7 @@ export default function ChatInterface() {
             <button
               onClick={exportChat}
               className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm md:space-x-2 md:px-4 md:py-2"
+              disabled={isLoading}
             >
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline text-sm md:text-base">Export</span>
@@ -274,12 +381,10 @@ export default function ChatInterface() {
             <button
               onClick={createNewChat}
               className="flex items-center space-x-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition shadow-sm md:space-x-2 md:px-4 md:py-2"
+              disabled={isLoading}
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline text-sm md:text-base">New Chat</span>
-            </button>
-            <button className="p-1.5 hover:bg-gray-100 rounded-lg transition">
-              <Settings className="w-4 h-4 text-gray-600" />
             </button>
           </div>
         </div>
@@ -369,6 +474,9 @@ export default function ChatInterface() {
                       <p className="text-xs text-gray-500 mt-1">
                         {new Date(chat.updatedAt).toLocaleDateString()}
                       </p>
+                      <p className="text-xs text-blue-500 mt-1">
+                        {chat.model}
+                      </p>
                     </div>
                     <button
                       onClick={(e) => {
@@ -396,13 +504,17 @@ export default function ChatInterface() {
                 <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
                 Chat Interface Ready
               </div>
-              <div className="flex items-center text-green-600">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                Mock APIs Active
+              <div className={`flex items-center ${systemStatus.color === 'green' ? 'text-green-600' : systemStatus.color === 'yellow' ? 'text-yellow-600' : 'text-gray-600'}`}>
+                <div className={`w-2 h-2 ${systemStatus.color === 'green' ? 'bg-green-500' : systemStatus.color === 'yellow' ? 'bg-yellow-500' : 'bg-gray-500'} rounded-full mr-2`}></div>
+                {systemStatus.status}
               </div>
               <div className="flex items-center text-blue-600">
                 <div className="w-2 h-2 bg-blue-500 rounded-full mr-2"></div>
                 Model: {selectedModel}
+              </div>
+              <div className="flex items-center text-gray-600">
+                <div className="w-2 h-2 bg-gray-500 rounded-full mr-2"></div>
+                {chats.length} saved chats
               </div>
             </div>
           </div>
@@ -426,12 +538,14 @@ export default function ChatInterface() {
                     <button 
                       onClick={() => setInput("Help me write a blog post about AI trends")}
                       className="p-3 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-sm text-left"
+                      disabled={isLoading}
                     >
                       ✍️ Blog post about AI trends
                     </button>
                     <button 
                       onClick={() => setInput("Create social media posts for my product launch")}
                       className="p-3 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-sm text-left"
+                      disabled={isLoading}
                     >
                       📱 Social media content
                     </button>
@@ -546,9 +660,10 @@ export default function ChatInterface() {
             <div className="flex items-center justify-between mt-2">
               <p className="text-xs text-gray-500">
                 Using: <span className="font-medium">{models.find(m => m.id === selectedModel)?.name}</span>
+                {!systemStatus.isRealMode && ' (Development)'}
               </p>
               <p className="text-xs text-gray-500">
-                {messages.length} messages • Local Mode
+                {messages.length} messages • {systemStatus.status}
               </p>
             </div>
           </div>

@@ -1,13 +1,38 @@
-Welcome to your new TanStack app! 
+# AI Content Assistant
 
-# Getting Started
+An intelligent content creation assistant powered by OpenAI GPT and Google Gemini AI models.
 
-To run this application:
+## Getting Started
+
+### 1. Install Dependencies
 
 ```bash
 npm install
-npm run start
 ```
+
+### 2. Configure API Keys
+
+Create a `.env.local` file in the project root with your API keys:
+
+```env
+# OpenAI API Key (required for GPT-3.5 Turbo and GPT-4)
+# Get your key from: https://platform.openai.com/api-keys
+OPENAI_API_KEY=sk-your-openai-api-key-here
+
+# Google Gemini API Key (required for Gemini Pro)
+# Get your key from: https://makersuite.google.com/app/apikey
+GOOGLE_GENERATIVE_AI_API_KEY=your-gemini-api-key-here
+```
+
+**Note:** You need at least one API key configured to use the AI features. The application will connect to real AI APIs when keys are provided.
+
+### 3. Run the Application
+
+```bash
+npm run dev
+```
+
+The application will be available at `http://localhost:3000`
 
 # Building For Production
 

@@ -4,20 +4,14 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'react-hot-toast'
 
-// Import your route from app/routes
+// Import your routes
 import { Route as IndexRoute } from './routes/index'
 
 // Create QueryClient instance
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      gcTime: 1000 * 60 * 10, // 10 minutes
-    },
-  },
-})
+const queryClient = new QueryClient()
 
-// Manually create route tree without generated file
+// Create route tree - API routes are handled automatically by TanStack Router
+// They don't need to be added to the client-side route tree
 const routeTree = IndexRoute
 
 // Create router
